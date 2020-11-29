@@ -1,0 +1,3 @@
+#!/bin/sh
+echo 3l0>pupa2
+sleep 10
