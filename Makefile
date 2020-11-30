@@ -1,23 +1,23 @@
 CC := clang++
 CFLAGS := -std=c++17 -O3
 
-OBJS = main.o
+OBJS = main.o container.o config.o
 
 .PHONY: all clean test
 
-all: containers/masno engine
+all: containers/masno.container engine
 
-$(OBJS): $(OBJS:.o=.cpp)
+.cpp.o:
 	$(CC) $(CFLAGS) -c $<
 
 engine: $(OBJS)
-	$(CC) $(CFLAGS) $< -o engine
+	$(CC) $(CFLAGS) $(OBJS) -o engine
 
-containers/masno: containers/masno.cpp
+containers/masno.container: containers/masno.cpp
 	$(CC) $(CFLAGS) $< -o $@
 
 test:
 	sudo ./engine
 
 clean:
-	rm $(OBJS) engine containers/masno
+	rm $(OBJS) engine containers/masno.container
