@@ -1,3 +1,5 @@
+# the port where the discovery server will run
 discovery_port = 6666
+# the range of ports to put containers in
 range_begin = 30000
 range_end = 40000
