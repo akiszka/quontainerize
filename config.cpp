@@ -24,7 +24,7 @@ int Configuration::config_read(std::string filename) {
         std::cerr << "Couldn't open config file for reading.\n";
 	return -1;
     }
-    return 0;   
+    return 0;
 }
 
 int Configuration::config_check_range() {

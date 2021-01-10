@@ -1,0 +1,6 @@
+include_rules
+
+LDFLAGS += -static
+
+: foreach *.cpp | *.hpp |> !cc |> %B.o
+: *.o |> !ld |> container

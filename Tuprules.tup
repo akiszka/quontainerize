@@ -1,0 +1,13 @@
+.gitignore
+
+CC = clang++
+
+CFLAGS += -O2
+CFLAGS += -std=c++17
+CFLAGS += -Wall
+CFLAGS += -Wextra
+CFLAGS += -g
+
+!cc = |> $(CC) %f -c $(CFLAGS) $(CPPFLAGS) |>
+!ld = |> $(CC) %f -o %o $(LDFLAGS) |>
+

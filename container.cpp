@@ -1,15 +1,17 @@
 #include <algorithm> // std::find
 #include <iostream> // std::cout, std::cerr
 #include <filesystem> // std::filesystem
+#include <fstream> // std::ifstream
+#include <map> // std::map
+
+namespace fs = std::filesystem;
 
 #include <sched.h> // clone
 #include <sys/types.h> // waitpid
 #include <sys/wait.h> // waitpid, SIGCHILD
-#include <unistd.h> // execv
+#include <unistd.h> // execv, chdir
 
 #include "container.hpp"
-
-namespace fs = std::filesystem;
 
 int ContainerSpace::generate_port() {
     if (port_range_end - port_range_start < generated_ports.size()) {
@@ -33,7 +35,7 @@ void ContainerSpace::wait() {
 }
 
 void ContainerSpace::run_containers(const std::string directory) {
-    std::string suffix = ".container";
+    std::string suffix = ".manifest";
     
     for (const auto& entry : fs::directory_iterator(directory)) {
 	std::string path = entry.path().string();
@@ -44,6 +46,10 @@ void ContainerSpace::run_containers(const std::string directory) {
 	}
     }
 
+    if (chdir(directory.c_str()) != 0) {
+	std::cerr << "Can't change directory to: " << directory << "." << std::endl;
+    }
+    
     for (auto& container : containers) {
 	container.run();
     }
@@ -59,26 +65,30 @@ ContainerSpace::~ContainerSpace() {
     delete random_port_distribution;
 }
 
-int Container::internal_exec(void* args) {
-    clone_args_t* _clone_args = (clone_args_t*) args;
-    // unmount all
-    // chroot (bind mount/pivot root dance)
-    // mount /proc (make /dev?)
-    // remove capabilities? or switch user
-    const char* name = _clone_args->executable_name.c_str();
-    char* port_buffer = (char*) (std::to_string(_clone_args->port).c_str());
-    char* newargv[] = { port_buffer, NULL };
+Container::Container(std::string manifest_name, int port) {
+    std::map<std::string, std::string> configuration;
     
-    execv(name, newargv);
-    std::cerr << "Starting a container failed." << std::endl;
-    exit(EXIT_FAILURE);
+    std::ifstream manifest(manifest_name);
+    if (manifest.is_open()) {
+        std::string line;
+        while(getline(manifest, line)){
+            line.erase(std::remove_if(line.begin(), line.end(), isspace), line.end());
+            if(line[0] == '#' || line.empty())
+		continue;
+            auto delimiterPos = line.find("=");
+            auto name = line.substr(0, delimiterPos);
+            auto value = line.substr(delimiterPos + 1);
+	    configuration[name] = value;
+        }
+        
+    } else {
+        std::cerr << "Couldn't open manifest file: " << manifest_name << ".\n";
+	exit(EXIT_FAILURE);
+    }
     
-    return 0;
-}
-
-Container::Container(std::string _executable_name, int _port) {
-    clone_args.executable_name = _executable_name;
-    clone_args.port = _port;
+    clone_args.executable_name = configuration["executable"];
+    clone_args.directory_path = configuration["dirname"];
+    clone_args.port = port;
 }
 
 void Container::run() {
@@ -95,6 +105,35 @@ void Container::run() {
     std::cout << "Spawning a container (pid: " << p << ", executable name: \"" << clone_args.executable_name << "\", port: " << clone_args.port << ")." << std::endl;
 
     pid = p;
+}
+
+int Container::internal_exec(void* args) {
+    clone_args_t* _clone_args = (clone_args_t*) args;
+    // unmount all
+    // chroot (bind mount/pivot root dance)
+    // mount /proc (make /dev?)
+    // remove capabilities? or switch user
+
+    if (chroot(_clone_args->directory_path.c_str()) != 0) {
+	std::cerr << "Cannnot chroot!" << std::endl;
+	exit(EXIT_FAILURE);
+    }
+
+    if (chdir("/") != 0) {
+	std::cerr << "Cannot change directory to new root!" << std::endl;
+	exit(EXIT_FAILURE);
+    }
+    
+    const char* name = _clone_args->executable_name.c_str();
+    const std::string port_str = std::to_string(_clone_args->port);
+    
+    char* const newargv[] = { (char*) port_str.c_str(), (char*) NULL };
+    
+    execv(name, newargv);
+    std::cerr << "Starting a container failed." << std::endl;
+    exit(EXIT_FAILURE);
+    
+    return 0;
 }
 
 void Container::wait() {

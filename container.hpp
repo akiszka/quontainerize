@@ -11,11 +11,13 @@ class Container {
 
     struct CLONE_ARGS_t {
 	std::string executable_name;
+	std::string directory_path;
+	std::string args;
 	int port;
     } clone_args;
     typedef struct CLONE_ARGS_t clone_args_t;
 public:
-    Container(std::string _executable_name, int _port);
+    Container(std::string manifest_name, int port);
 
     void wait();
     void run();
