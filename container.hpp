@@ -13,6 +13,7 @@ class Container {
 	std::string executable_name;
 	std::string directory_path;
 	std::string args;
+	bool mount;
 	int port;
     } clone_args;
     typedef struct CLONE_ARGS_t clone_args_t;

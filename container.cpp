@@ -8,7 +8,8 @@ namespace fs = std::filesystem;
 
 #include <sched.h> // clone
 #include <sys/types.h> // waitpid
-#include <sys/wait.h> // waitpid, SIGCHILD
+#include <sys/wait.h> // waitpid, SIGCHIL
+#include <sys/mount.h> // mount, umonut
 #include <unistd.h> // execv, chdir
 
 #include "container.hpp"
@@ -88,6 +89,7 @@ Container::Container(std::string manifest_name, int port) {
     
     clone_args.executable_name = configuration["executable"];
     clone_args.directory_path = configuration["dirname"];
+    clone_args.mount = configuration["mount"] == "true" ? true : false;
     clone_args.port = port;
 }
 
@@ -109,18 +111,25 @@ void Container::run() {
 
 int Container::internal_exec(void* args) {
     clone_args_t* _clone_args = (clone_args_t*) args;
-    // unmount all
-    // chroot (bind mount/pivot root dance)
-    // mount /proc (make /dev?)
     // remove capabilities? or switch user
 
-    if (chroot(_clone_args->directory_path.c_str()) != 0) {
-	std::cerr << "Cannnot chroot!" << std::endl;
+    if (chdir(_clone_args->directory_path.c_str()) != 0) {
+	std::cerr << "Cannot change directory to new root!" << std::endl;
 	exit(EXIT_FAILURE);
     }
 
-    if (chdir("/") != 0) {
-	std::cerr << "Cannot change directory to new root!" << std::endl;
+    if (_clone_args->mount) {
+	umount("./dev");
+	umount("./proc");
+    
+	if ((mount("/dev", "./dev", NULL, MS_BIND, NULL) != 0) || (mount("proc", "./proc", "proc", 0, NULL))) {
+	    std::cerr << "Cannot mount filesystems." << std::endl;
+	    exit(EXIT_FAILURE);
+	}
+    }
+
+    if (chroot(".") != 0) {
+	std::cerr << "Cannnot chroot!" << std::endl;
 	exit(EXIT_FAILURE);
     }
     
