@@ -1,14 +1,15 @@
 #include <algorithm> // std::find
 #include <iostream> // std::cout, std::cerr
 #include <fstream> // std::ifstream
+#include <filesystem> // std::filesystem
 #include <map> // std::map
 
 #include <sched.h> // clone
 #include <sys/types.h> // waitpid
 #include <sys/wait.h> // waitpid, SIGCHIL
 #include <sys/mount.h> // mount, umonut
-#include <unistd.h> // execv, chdir
-
+#include <unistd.h> // execv, chdir, mkdtemp
+#include <cstdlib> // mkdtemp
 #include "container.hpp"
 
 Container::Container(std::string manifest_name, int port) {
@@ -35,6 +36,7 @@ Container::Container(std::string manifest_name, int port) {
     clone_args.executable_name = configuration["executable"];
     clone_args.directory_path = configuration["dirname"];
     clone_args.mount = configuration["mount"] == "true" ? true : false;
+    clone_args.direct = configuration["direct"] == "true" ? true : false;
     clone_args.port = port;
 }
 
@@ -57,12 +59,42 @@ void Container::run() {
 int Container::internal_exec(void* args) {
     clone_args_t* _clone_args = (clone_args_t*) args;
     // remove capabilities? or switch user
+    
+    if (!_clone_args->direct) {
+	// non-direct container was requested
+	// first, a temp directory will be created. then the container "image" will be mounted there using overlayfs
+	std::string tmp_template = std::filesystem::temp_directory_path() / "qcontain_runXXXXXX";
+	std::string workdir_template = std::filesystem::temp_directory_path() / "qcontain_workXXXXXX";
+	
+	char* tmpdir = mkdtemp(tmp_template.data());
+	char* workdir = mkdtemp(workdir_template.data());
+	
+	std::string srcdir = std::filesystem::absolute(_clone_args->directory_path);
+	
+	if (NULL == tmpdir) {
+	    std::cerr << "Cannot create a temporary directory." << std::endl;
+	    exit(EXIT_FAILURE);
+	}
 
-    if (chdir(_clone_args->directory_path.c_str()) != 0) {
-	std::cerr << "Cannot change directory to new root!" << std::endl;
-	exit(EXIT_FAILURE);
+	std::string mount_data = "lowerdir=" + srcdir + ",upperdir=" + tmpdir + ",workdir=" + workdir;
+	if (mount("overlay", tmpdir, "overlay", 0, mount_data.data()) != 0) {
+	    std::cerr << "Cannot mount read-only volume." << std::endl;
+	    exit(EXIT_FAILURE);
+	}
+	
+	if (chdir(tmpdir) != 0) {
+	    std::cerr << "Cannot change directory to new root." << std::endl;
+	    exit(EXIT_FAILURE);
+	}
+    } else {
+	// if a direct container is not necessary, just go to the data directory
+	if (chdir(_clone_args->directory_path.c_str()) != 0) {
+	    std::cerr << "Cannot change directory to new root!" << std::endl;
+	    exit(EXIT_FAILURE);
+	}
     }
-
+    
+    // mount /dev and /proc if it was requested
     if (_clone_args->mount) {
 	umount("./dev");
 	umount("./proc");
@@ -85,7 +117,6 @@ int Container::internal_exec(void* args) {
     
     execv(name, newargv);
     std::cerr << "Starting a container failed." << std::endl;
-    exit(EXIT_FAILURE);
     
     return 0;
 }
