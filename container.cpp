@@ -5,11 +5,13 @@
 #include <map> // std::map
 
 #include <sched.h> // clone
-#include <sys/types.h> // waitpid
+#include <sys/types.h> // waitpid, gete{uid,gid}
 #include <sys/wait.h> // waitpid, SIGCHIL
 #include <sys/mount.h> // mount, umonut
-#include <unistd.h> // execv, chdir, mkdtemp
-#include <cstdlib> // mkdtemp
+#include <fcntl.h> // openat, AT_FWCWD
+#include <unistd.h> // execv, chdir, mkdtemp, gete{uid,gid}
+#include <sys/syscall.h> // For SYS_xxx definitions
+#include <cstdlib> // mkdtemp, system
 #include "container.hpp"
 
 Container::Container(std::string manifest_name, int port) {
@@ -38,12 +40,13 @@ Container::Container(std::string manifest_name, int port) {
     clone_args.mount = configuration["mount"] == "true" ? true : false;
     clone_args.direct = configuration["direct"] == "true" ? true : false;
     clone_args.port = port;
+    clone_args.euid = geteuid();
+    clone_args.egid = getegid();
 }
 
 void Container::run() {
     char* stack = static_cast<char*>(malloc(4096)) + 4096;
-    int namespaces = CLONE_NEWUTS | CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWNS;// | CLONE_NEWNET
-    
+    int namespaces = CLONE_NEWUTS | CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWNS | CLONE_NEWUSER;// | CLONE_NEWNET
     pid_t p = clone(internal_exec, stack, SIGCHLD|namespaces, &clone_args);
     
     if (p == -1) {
@@ -58,31 +61,60 @@ void Container::run() {
 
 int Container::internal_exec(void* args) {
     clone_args_t* _clone_args = (clone_args_t*) args;
-    // remove capabilities? or switch user
+    
+    // map the current user and group to root
+    {
+	std::string uid_map = "0 " + std::to_string(_clone_args->euid) + " 1";
+	std::string gid_map = "0 " + std::to_string(_clone_args->egid) + " 1";
+
+	int fd = openat(AT_FDCWD, "/proc/self/uid_map", O_WRONLY);
+	if (write(fd, uid_map.data(), uid_map.length()) != uid_map.length()) {
+	    std::cerr << "Cannnot set uid map!" << std::endl;
+	    exit(EXIT_FAILURE);
+	}
+	close(fd);
+
+	fd = openat(AT_FDCWD, "/proc/self/setgroups", O_WRONLY);
+	if (write(fd, "deny", 4) != 4) {
+	    std::cerr << "Cannnot set gid map (stage 1)!" << std::endl;
+	    exit(EXIT_FAILURE);
+	}
+	close(fd);
+	
+	fd = openat(AT_FDCWD, "/proc/self/gid_map", O_WRONLY);
+	if (write(fd, gid_map.data(), gid_map.length()) != gid_map.length()) {
+	    std::cerr << "Cannnot set gid map (stage 2)!" << std::endl;
+	    exit(EXIT_FAILURE);
+	}
+	close(fd);
+    }
     
     if (!_clone_args->direct) {
 	// non-direct container was requested
 	// first, a temp directory will be created. then the container "image" will be mounted there using overlayfs
-	std::string tmp_template = std::filesystem::temp_directory_path() / "qcontain_runXXXXXX";
+	std::string upperdir_template = std::filesystem::temp_directory_path() / "qcontain_runXXXXXX";
 	std::string workdir_template = std::filesystem::temp_directory_path() / "qcontain_workXXXXXX";
 	
-	char* tmpdir = mkdtemp(tmp_template.data());
+	char* upperdir = mkdtemp(upperdir_template.data());
 	char* workdir = mkdtemp(workdir_template.data());
 	
-	std::string srcdir = std::filesystem::absolute(_clone_args->directory_path);
-	
-	if (NULL == tmpdir) {
+	std::string srcdir = _clone_args->directory_path;
+
+	if (nullptr == upperdir || nullptr == workdir) {
 	    std::cerr << "Cannot create a temporary directory." << std::endl;
 	    exit(EXIT_FAILURE);
 	}
 
-	std::string mount_data = "lowerdir=" + srcdir + ",upperdir=" + tmpdir + ",workdir=" + workdir;
-	if (mount("overlay", tmpdir, "overlay", 0, mount_data.data()) != 0) {
+	std::string mount_data = "lowerdir=" + srcdir + ",upperdir=" + upperdir + ",workdir=" + workdir;
+	std::string command = "bash -c '";
+	command += "fuse-overlayfs -o " + mount_data + " " + upperdir + "'";
+
+	if (system(command.data()) != 0) { // this is disgusting, i'm probably going to hell for this
 	    std::cerr << "Cannot mount read-only volume." << std::endl;
 	    exit(EXIT_FAILURE);
 	}
 	
-	if (chdir(tmpdir) != 0) {
+	if (chdir(upperdir) != 0) {
 	    std::cerr << "Cannot change directory to new root." << std::endl;
 	    exit(EXIT_FAILURE);
 	}
@@ -93,18 +125,23 @@ int Container::internal_exec(void* args) {
 	    exit(EXIT_FAILURE);
 	}
     }
-    
-    // mount /dev and /proc if it was requested
+
+    // mount /proc if it was requested
+    // TODO: mount /dev and /sys (possibly filtered)
     if (_clone_args->mount) {
-	umount("./dev");
-	umount("./proc");
-    
-	if ((mount("/dev", "./dev", NULL, MS_BIND, NULL) != 0) || (mount("proc", "./proc", "proc", 0, NULL))) {
+	if (mount("proc", "./proc", "proc", 0, NULL) != 0) {
 	    std::cerr << "Cannot mount filesystems." << std::endl;
 	    exit(EXIT_FAILURE);
 	}
     }
 
+    // change the fs root to the current directory (this prevents chroot escape, see: pivot_root(2) manpage)
+    if (syscall(SYS_pivot_root, ".", ".") != 0 ||
+	umount2(".", MNT_DETACH) != 0) {
+	std::cerr << "Cannnot pivot root!" << std::endl;
+	exit(EXIT_FAILURE);
+    }
+    
     if (chroot(".") != 0) {
 	std::cerr << "Cannnot chroot!" << std::endl;
 	exit(EXIT_FAILURE);
@@ -114,9 +151,10 @@ int Container::internal_exec(void* args) {
     const std::string port_str = std::to_string(_clone_args->port);
     
     char* const newargv[] = { (char*) port_str.c_str(), (char*) NULL };
-    
+
+    // finally, run the desired program within the container
     execv(name, newargv);
-    std::cerr << "Starting a container failed." << std::endl;
+    std::cerr << "Starting the contained program failed." << std::endl;
     
     return 0;
 }

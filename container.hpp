@@ -2,6 +2,8 @@
 #define CONTAINER_HPP
 
 #include <string>
+#include <sys/types.h>
+#include <unistd.h>
 
 class Container {
     pid_t pid;
@@ -12,9 +14,11 @@ class Container {
 	std::string executable_name;
 	std::string directory_path;
 	std::string args;
+	int port;
+	uid_t euid;
+	gid_t egid;
 	bool mount;
 	bool direct;
-	int port;
     } clone_args;
     typedef struct CLONE_ARGS_t clone_args_t;
 public:
