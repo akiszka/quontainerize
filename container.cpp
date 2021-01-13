@@ -9,7 +9,7 @@
 #include <sys/wait.h> // waitpid, SIGCHIL
 #include <sys/mount.h> // mount, umonut
 #include <fcntl.h> // openat, AT_FWCWD
-#include <unistd.h> // execv, chdir, mkdtemp, gete{uid,gid}
+#include <unistd.h> // execve, chdir, mkdtemp, gete{uid,gid}
 #include <sys/syscall.h> // For SYS_xxx definitions
 #include <cstdlib> // mkdtemp, system
 #include "container.hpp"
@@ -138,16 +138,18 @@ int Container::internal_exec(void* args) {
 	std::cerr << "Cannnot chroot!" << std::endl;
 	exit(EXIT_FAILURE);
     }
-    
-    const char* name = _clone_args->executable_name.c_str();
-    const std::string port_str = std::to_string(_clone_args->port);
-    
-    char* const newargv[] = { (char*) port_str.c_str(), (char*) NULL };
 
     // finally, run the desired program within the container
-    execv(name, newargv);
-    std::cerr << "Starting the contained program failed." << std::endl;
+    {
+	const char* name = _clone_args->executable_name.c_str();
+	const std::string port_str = std::to_string(_clone_args->port);
     
+	char* const newargv[] = { (char*) port_str.data(), NULL };
+	char* const env[] = { NULL };
+
+	execve(name, newargv, env);
+	std::cerr << "Starting the contained program failed." << std::endl;
+    }
     return 0;
 }
 
