@@ -1,4 +1,3 @@
 dirname = ./testing
 executable = /container
-direct = false
 mount = false

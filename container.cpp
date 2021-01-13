@@ -38,7 +38,6 @@ Container::Container(std::string manifest_name, int port) {
     clone_args.executable_name = configuration["executable"];
     clone_args.directory_path = configuration["dirname"];
     clone_args.mount = configuration["mount"] == "true" ? true : false;
-    clone_args.direct = configuration["direct"] == "true" ? true : false;
     clone_args.port = port;
     clone_args.euid = geteuid();
     clone_args.egid = getegid();
@@ -88,10 +87,9 @@ int Container::internal_exec(void* args) {
 	}
 	close(fd);
     }
-    
-    if (!_clone_args->direct) {
-	// non-direct container was requested
-	// first, a temp directory will be created. then the container "image" will be mounted there using overlayfs
+
+    // first, a temp directory will be created. then the container "image" will be mounted there using fuse-overlayfs. this directory the container's rootfs.
+    {
 	std::string upperdir_template = std::filesystem::temp_directory_path() / "qcontain_runXXXXXX";
 	std::string workdir_template = std::filesystem::temp_directory_path() / "qcontain_workXXXXXX";
 	
@@ -116,12 +114,6 @@ int Container::internal_exec(void* args) {
 	
 	if (chdir(upperdir) != 0) {
 	    std::cerr << "Cannot change directory to new root." << std::endl;
-	    exit(EXIT_FAILURE);
-	}
-    } else {
-	// if a direct container is not necessary, just go to the data directory
-	if (chdir(_clone_args->directory_path.c_str()) != 0) {
-	    std::cerr << "Cannot change directory to new root!" << std::endl;
 	    exit(EXIT_FAILURE);
 	}
     }

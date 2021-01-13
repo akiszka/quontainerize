@@ -18,7 +18,6 @@ class Container {
 	uid_t euid;
 	gid_t egid;
 	bool mount;
-	bool direct;
     } clone_args;
     typedef struct CLONE_ARGS_t clone_args_t;
 public:
