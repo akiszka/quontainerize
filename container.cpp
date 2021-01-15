@@ -9,7 +9,7 @@
 #include <sys/wait.h> // waitpid, SIGCHIL
 #include <sys/mount.h> // mount, umonut
 #include <fcntl.h> // openat, AT_FWCWD
-#include <unistd.h> // execve, chdir, mkdtemp, gete{uid,gid}
+#include <unistd.h> // execve, chdir, mkdtemp, gete{uid,gid}, sethostname
 #include <sys/syscall.h> // For SYS_xxx definitions
 #include <cstdlib> // mkdtemp, system
 #include "container.hpp"
@@ -90,8 +90,8 @@ int Container::internal_exec(void* args) {
 
     // first, a temp directory will be created. then the container "image" will be mounted there using fuse-overlayfs. this directory the container's rootfs.
     {
-	std::string upperdir_template = std::filesystem::temp_directory_path() / "qcontain_runXXXXXX";
-	std::string workdir_template = std::filesystem::temp_directory_path() / "qcontain_workXXXXXX";
+	std::string upperdir_template = std::filesystem::temp_directory_path() / "quont_runXXXXXX";
+	std::string workdir_template = std::filesystem::temp_directory_path() / "quont_workXXXXXX";
 	
 	char* upperdir = mkdtemp(upperdir_template.data());
 	char* workdir = mkdtemp(workdir_template.data());
@@ -139,6 +139,12 @@ int Container::internal_exec(void* args) {
 	exit(EXIT_FAILURE);
     }
 
+    // set the hostname
+    {
+	std::string hostname = "qont";
+	sethostname(hostname.data(), hostname.length());
+    }
+    
     // finally, run the desired program within the container
     {
 	const char* name = _clone_args->executable_name.c_str();
