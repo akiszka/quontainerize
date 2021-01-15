@@ -1,8 +1,7 @@
 #include <algorithm> // std::find
 #include <iostream> // std::cout, std::cerr
-#include <fstream> // std::ifstream
 #include <filesystem> // std::filesystem
-#include <map> // std::map
+#include <sstream> // std::stringstream
 
 #include <sched.h> // clone
 #include <sys/types.h> // waitpid, gete{uid,gid}
@@ -14,31 +13,10 @@
 #include <cstdlib> // mkdtemp, system
 #include "container.hpp"
 
-Container::Container(std::string manifest_name, int port) {
-    std::map<std::string, std::string> configuration;
-    
-    std::ifstream manifest(manifest_name);
-    if (manifest.is_open()) {
-        std::string line;
-        while(getline(manifest, line)){
-            line.erase(std::remove_if(line.begin(), line.end(), isspace), line.end());
-            if(line[0] == '#' || line.empty())
-		continue;
-            auto delimiterPos = line.find("=");
-            auto name = line.substr(0, delimiterPos);
-            auto value = line.substr(delimiterPos + 1);
-	    configuration[name] = value;
-        }
-        
-    } else {
-        std::cerr << "Couldn't open manifest file: " << manifest_name << ".\n";
-	exit(EXIT_FAILURE);
-    }
-    
-    clone_args.executable_name = configuration["executable"];
-    clone_args.directory_path = configuration["dirname"];
-    clone_args.mount = configuration["mount"] == "true" ? true : false;
-    clone_args.port = port;
+Container::Container(std::vector<std::string> command, std::string image_path, bool mount) {    
+    clone_args.command = command;
+    clone_args.image_path = image_path;
+    clone_args.mount = mount;
     clone_args.euid = geteuid();
     clone_args.egid = getegid();
 }
@@ -53,7 +31,7 @@ void Container::run() {
         exit(EXIT_FAILURE);
     }
     
-    std::cout << "Spawning a container (pid: " << p << ", executable name: \"" << clone_args.executable_name << "\", port: " << clone_args.port << ")." << std::endl;
+    std::cout << "Spawning a container (pid: " << p << ")." << std::endl;
 
     pid = p;
 }
@@ -96,7 +74,7 @@ int Container::internal_exec(void* args) {
 	char* upperdir = mkdtemp(upperdir_template.data());
 	char* workdir = mkdtemp(workdir_template.data());
 	
-	std::string srcdir = _clone_args->directory_path;
+	std::string srcdir = _clone_args->image_path;
 
 	if (nullptr == upperdir || nullptr == workdir) {
 	    std::cerr << "Cannot create a temporary directory." << std::endl;
@@ -147,13 +125,21 @@ int Container::internal_exec(void* args) {
     
     // finally, run the desired program within the container
     {
-	const char* name = _clone_args->executable_name.c_str();
-	const std::string port_str = std::to_string(_clone_args->port);
-    
-	char* const newargv[] = { (char*) port_str.data(), NULL };
-	char* const env[] = { NULL };
+	std::vector<char*> argv;
 
-	execve(name, newargv, env);
+	// convert the passed argv from std::string's to char*'s
+	for (auto& arg : _clone_args->command) {
+	    argv.push_back(arg.data());
+	}
+	argv.push_back(nullptr);
+
+	std::stringstream executable_stream(_clone_args->command[0]);
+	std::string executable;
+	executable_stream >> executable;
+	
+	char* const env[] = { nullptr };
+
+	execve(executable.data(), argv.data(), env);
 	std::cerr << "Starting the contained program failed." << std::endl;
     }
     return 0;
